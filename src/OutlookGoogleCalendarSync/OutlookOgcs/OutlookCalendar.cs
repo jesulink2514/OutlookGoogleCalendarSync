@@ -883,6 +883,11 @@ namespace OutlookGoogleCalendarSync.OutlookOgcs {
                 log.Info("Attaching to the already running Outlook process.");
                 try {
                     oApp = System.Runtime.InteropServices.Marshal.GetActiveObject("Outlook.Application") as Microsoft.Office.Interop.Outlook.Application;
+                    if (oApp == null) {
+                        NullReferenceException ex = new NullReferenceException("Could not attach to running Outlook process.");
+                        ex = OGCSexception.LogAsFail(ex) as NullReferenceException;
+                        throw ex;
+                    }
                 } catch (System.Exception ex) {
                     if (OGCSexception.GetErrorCode(ex) == "0x800401E3") { //MK_E_UNAVAILABLE
                         log.Warn("Attachment failed - Outlook is running without GUI for programmatic access.");
@@ -1019,28 +1024,48 @@ namespace OutlookGoogleCalendarSync.OutlookOgcs {
         private static Boolean comErrorInWiki(System.Exception ex) {
             String hResult = OGCSexception.GetErrorCode(ex);
             String wikiUrl = "";
+            System.Text.RegularExpressions.Regex rgx;
 
-            try {
-                String html = "";
+            if (!ex.Message.Contains(hResult)) {
+                OGCSexception.Analyse("Exception GetErrorCode() returned " + hResult + " which does not match the error message!", ex);
+                log.Debug("Going to extract the code from the error message and use that instead.");
                 try {
-                    html = new System.Net.WebClient().DownloadString("https://github.com/phw198/OutlookGoogleCalendarSync/wiki/FAQs---COM-Errors");
-                } catch (System.Exception) {
-                    log.Fail("Could not download wiki HTML.");
-                    throw;
-                }
-                if (!string.IsNullOrEmpty(html)) {
-                    html = html.Replace("\n", "");
-                    System.Text.RegularExpressions.Regex rgx = new System.Text.RegularExpressions.Regex(@"<h2><a.*?href=\""(#"+ hResult +".*?)\"", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-                    System.Text.RegularExpressions.MatchCollection sourceAnchors = rgx.Matches(html);
-                    if (sourceAnchors.Count == 0) {
-                        log.Debug("Could you not find the COM error " + hResult + " in the wiki.");
+                    rgx = new System.Text.RegularExpressions.Regex(@"HRESULT: (0x[\dA-F]{8})", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                    System.Text.RegularExpressions.MatchCollection matches = rgx.Matches(ex.Message);
+                    if (matches.Count == 0) {
+                        log.Error("Could not regex HRESULT out of the error message");
+                        hResult = "";
                     } else {
-                        wikiUrl = "https://github.com/phw198/OutlookGoogleCalendarSync/wiki/FAQs---COM-Errors" + sourceAnchors[0].Groups[1].Value;
+                        hResult = matches[0].Groups[1].Value;
                     }
+                } catch (System.Exception ex2) {
+                    OGCSexception.Analyse("Passing error message with regex failed.", ex2);
                 }
+            }
 
-            } catch (System.Exception htmlEx) {
-                OGCSexception.Analyse("Could not parse Wiki for existance of COM error.", htmlEx);
+            if (!string.IsNullOrEmpty(hResult)) {
+                try {
+                    String html = "";
+                    try {
+                        html = new System.Net.WebClient().DownloadString("https://github.com/phw198/OutlookGoogleCalendarSync/wiki/FAQs---COM-Errors");
+                    } catch (System.Exception) {
+                        log.Fail("Could not download wiki HTML.");
+                        throw;
+                    }
+                    if (!string.IsNullOrEmpty(html)) {
+                        html = html.Replace("\n", "");
+                        rgx = new System.Text.RegularExpressions.Regex(@"<h2><a.*?href=\""(#" + hResult + ".*?)\"", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                        System.Text.RegularExpressions.MatchCollection sourceAnchors = rgx.Matches(html);
+                        if (sourceAnchors.Count == 0) {
+                            log.Debug("Could you not find the COM error " + hResult + " in the wiki.");
+                        } else {
+                            wikiUrl = "https://github.com/phw198/OutlookGoogleCalendarSync/wiki/FAQs---COM-Errors" + sourceAnchors[0].Groups[1].Value;
+                        }
+                    }
+
+                } catch (System.Exception htmlEx) {
+                    OGCSexception.Analyse("Could not parse Wiki for existance of COM error.", htmlEx);
+                }
             }
 
             if (string.IsNullOrEmpty(wikiUrl)) {
